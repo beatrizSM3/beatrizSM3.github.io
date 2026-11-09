@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenLitika · Beatriz Meneses</title>
+  <meta name="description" content="Estudo de caso: assistente de informação legislativa com grafo Neo4j, heurísticas de aprovação e agentes LangGraph. 5º lugar no Hackathon AI Tinkerers – Google DeepMind." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/style.css" />
+  <script>try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body>
+  <header class="nav">
+    <div class="container nav-inner">
+      <a href="../" class="logo"><span class="prompt">~/</span>beatriz<span class="cursor"></span></a>
+      <nav class="nav-links">
+        <a href="../#projetos" class="active">Projetos</a>
+        <a href="../blog/">Blog</a>
+        <a href="../#contato" class="hide-sm">Contato</a>
+        <button class="theme-toggle" id="themeToggle" aria-label="Alternar tema">
+          <svg class="icon-sun" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container narrow">
+    <div class="article-head">
+      <a class="back" href="../#projetos">← projetos</a>
+      <h1>OpenLitika</h1>
+      <p class="tagline">O que diz esse projeto de lei, e qual a chance de ele passar? Uma resposta em linguagem simples, construída do zero em um hackathon.</p>
+      <div class="chips">
+        <span class="chip warm">🏅 5º lugar / Menção Honrosa · AI Tinkerers – Google DeepMind 2026</span>
+        <span class="chip">Neo4j</span><span class="chip">Cypher</span><span class="chip">LangGraph</span><span class="chip">FastAPI</span><span class="chip">React</span>
+      </div>
+      <div class="fact-row">
+        <div class="metric"><b>8</b><span>tipos de nó no grafo legislativo</span></div>
+        <div class="metric"><b>6</b><span>heurísticas de aprovação em Cypher</span></div>
+        <div class="metric"><b>2</b><span>agentes: Analista e Simplificador</span></div>
+      </div>
+    </div>
+
+    <article class="prose">
+      <h2><span class="n">01</span>O problema</h2>
+      <p>
+        Proposições legislativas são públicas, mas são difíceis de ler. O texto é jurídico, a tramitação passa por
+        várias comissões e não é óbvio se uma proposta tem chance real de aprovação. A API de Dados Abertos da
+        Câmara dos Deputados tem tudo isso, só que espalhado em vários endpoints.
+      </p>
+      <p>O OpenLitika junta esses dados num grafo e usa LLMs para explicar cada proposição para quem não é da área.</p>
+
+      <h2><span class="n">02</span>Por que um grafo</h2>
+      <p>
+        Política é feita de relações: deputados são de partidos, assinam proposições juntos, votam em votações,
+        proposições tratam de temas e tramitam em órgãos. Perguntas como <em>"quantos partidos diferentes apoiam
+        esta proposta?"</em> são uma travessia de grafo. Em SQL, seriam vários JOINs.
+      </p>
+      <div class="flow">
+        <div class="split three">
+          <div class="node"><b>Deputado</b></div>
+          <div class="node"><b>Partido</b></div>
+          <div class="node hl"><b>Proposição</b></div>
+        </div>
+        <div class="arrow">↕ AUTOR_DE · PERTENCE_A · VOTOU_EM · OBJETO_DE_VOTACAO · SOBRE_TEMA · ESTA_NO_ORGAO</div>
+        <div class="split three">
+          <div class="node"><b>Votação</b></div>
+          <div class="node"><b>Tema</b></div>
+          <div class="node"><b>Órgão</b></div>
+        </div>
+        <div class="arrow">+ SiglaTipo (PL, PEC…) e Situação</div>
+      </div>
+      <p>
+        A carga foi feita em etapas idempotentes (<code>MERGE</code>) com constraints de unicidade: primeiro as
+        tabelas de referência, depois deputados, proposições, votações e temas, e por fim o enriquecimento com
+        situação, partidos e regime de tramitação.
+      </p>
+
+      <h2><span class="n">03</span>Estimando a chance de aprovação</h2>
+      <p>
+        Em um hackathon não dá tempo de treinar e validar um modelo supervisionado. Optamos por
+        <strong>heurísticas explicáveis</strong>, cada uma uma consulta Cypher que devolve um valor entre 0 e 1.
+        O score final é a média ponderada:
+      </p>
+      <table>
+        <thead><tr><th>#</th><th>Heurística</th><th>Peso</th><th>O que mede</th></tr></thead>
+        <tbody>
+          <tr><td>H1</td><td>Votos favoráveis</td><td class="num">3,0</td><td>Proporção de votos SIM nas votações já feitas</td></tr>
+          <tr><td>H2</td><td>Coautores</td><td class="num">1,5</td><td>Quantidade de deputados coautores (satura em 10)</td></tr>
+          <tr><td>H3</td><td>Tipo da proposição</td><td class="num">1,0</td><td>Taxa histórica de aprovação do mesmo tipo (PL, PEC…)</td></tr>
+          <tr><td>H4</td><td>Diversidade partidária</td><td class="num">1,5</td><td>Partidos distintos entre os autores (satura em 4)</td></tr>
+          <tr><td>H5</td><td>Similares aprovadas</td><td class="num">2,0</td><td>Aprovação de proposições do mesmo tipo e órgão</td></tr>
+          <tr><td>H6</td><td>Aprovação em comissões</td><td class="num">2,0</td><td>Taxa de votações aprovadas, com destaque para comissões</td></tr>
+        </tbody>
+      </table>
+      <blockquote>
+        <p><strong>Detalhe importante:</strong> quando falta dado para uma heurística (por exemplo, uma proposição que ainda não foi votada), o score parcial é 0,5, neutro. Assim uma proposta recém-apresentada não é punida só por ser nova.</p>
+      </blockquote>
+      <p>O resultado vira uma faixa fácil de comunicar: <strong>alta</strong> (≥ 70%), <strong>média</strong> (45–69%), <strong>baixa</strong> (20–44%) ou <strong>dados insuficientes</strong>.</p>
+
+      <h2><span class="n">04</span>Os agentes</h2>
+      <div class="flow">
+        <div class="node"><b>Frontend React</b></div>
+        <div class="arrow">↓ API REST (FastAPI)</div>
+        <div class="split">
+          <div class="node hl"><b>Analista</b><small>consulta o grafo, roda as heurísticas e explica o score</small></div>
+          <div class="node hl"><b>Simplificador</b><small>reescreve o texto legislativo em linguagem simples</small></div>
+        </div>
+        <div class="arrow">↓</div>
+        <div class="node"><b>Neo4j</b></div>
+      </div>
+      <p>A API expõe listagem e busca de proposições, temas, estatísticas gerais e o detalhe de cada proposição com a previsão.</p>
+
+      <h2><span class="n">05</span>Meu papel</h2>
+      <ul>
+        <li>Modelei e populei o banco de grafos Neo4j com dados legislativos e políticos.</li>
+        <li>Implementei as heurísticas em grafo para estimar a probabilidade de aprovação.</li>
+        <li>Desenvolvi o agente conversacional com LangGraph e a API REST para o frontend em React.</li>
+      </ul>
+
+      <div class="next-proj">
+        <a href="eurecachat.html">← EurecaChat</a>
+        <a href="moratta.html">próximo: Moratta →</a>
+      </div>
+    </article>
+  </main>
+
+  <footer class="container footer">© <span id="year"></span> Beatriz de Souza Meneses</footer>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

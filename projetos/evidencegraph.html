@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EvidenceGraph · Beatriz Meneses</title>
+  <meta name="description" content="Estudo de caso: retrieval híbrido com grafos K-NN e calibração conformal para verificação de fatos em audiências públicas da Câmara dos Deputados." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/css/style.css" />
+  <script>try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body>
+  <header class="nav">
+    <div class="container nav-inner">
+      <a href="../" class="logo"><span class="prompt">~/</span>beatriz<span class="cursor"></span></a>
+      <nav class="nav-links">
+        <a href="../#projetos" class="active">Projetos</a>
+        <a href="../blog/">Blog</a>
+        <a href="../#contato" class="hide-sm">Contato</a>
+        <button class="theme-toggle" id="themeToggle" aria-label="Alternar tema">
+          <svg class="icon-sun" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container narrow">
+    <div class="article-head">
+      <a class="back" href="../#projetos">← projetos</a>
+      <h1>EvidenceGraph</h1>
+      <p class="tagline">Dá para confiar em RAG para verificar fatos? Retrieval de evidências, calibração e avaliação humana em audiências públicas da Câmara dos Deputados.</p>
+      <div class="chips">
+        <span class="chip warm">🥈 2º lugar · Kunumi Ideias em Rede 2026</span>
+        <span class="chip">Python</span><span class="chip">BM25</span><span class="chip">bge-m3</span><span class="chip">RRF</span><span class="chip">grafos K-NN</span><span class="chip">bge-reranker-v2-m3</span>
+      </div>
+      <div class="fact-row">
+        <div class="metric"><b>+40%</b><span>Macro-F1: 0,52 → 0,73 contra evidências fixas</span></div>
+        <div class="metric"><b>30→66%</b><span>recall de INFERRED com DeepSeek-V3</span></div>
+        <div class="metric"><b>206</b><span>transcrições de audiências públicas</span></div>
+        <div class="metric"><b>2.203</b><span>alegações no dataset estendido que publicamos</span></div>
+      </div>
+    </div>
+
+    <article class="prose">
+      <h2><span class="n">01</span>O problema</h2>
+      <p>
+        Numa audiência pública da Câmara, deputados e convidados falam por horas. A partir das transcrições,
+        alguém resume: <em>"o convidado X disse que a medida vai reduzir custos"</em>. A pergunta é simples: a
+        transcrição sustenta essa alegação?
+      </p>
+      <p>
+        Um LLM só consegue responder bem se receber o trecho certo da transcrição. O dataset original
+        (<code>PublicHearingBR</code>) já vem com quatro trechos fixos por alegação. Nossa hipótese: <strong>a
+        qualidade da verificação é limitada pela evidência, não pelo modelo</strong>. Buscar evidências melhores
+        deveria melhorar o resultado mais do que trocar de LLM.
+      </p>
+      <p>A tarefa é classificar cada alegação como <code>INFERRED</code> (a evidência sustenta) ou <code>NOT_INFERRED</code>.</p>
+
+      <h2><span class="n">02</span>Três formas de buscar evidência</h2>
+      <p>Comparamos três arquiteturas. Todas entregam no máximo quatro trechos finais por alegação, para a comparação ser justa.</p>
+      <table>
+        <thead><tr><th>Arquitetura</th><th>Como a evidência chega ao LLM</th></tr></thead>
+        <tbody>
+          <tr><td><strong>A · Fixa</strong> (baseline)</td><td>Usa os quatro trechos que já vêm no dataset. Nenhuma busca nova.</td></tr>
+          <tr><td><strong>B · Híbrida</strong></td><td>BM25 + busca densa com <code>BAAI/bge-m3</code>, combinados por Reciprocal Rank Fusion, com busca restrita às falas do locutor.</td></tr>
+          <tr><td><strong>C · Híbrida + grafo</strong></td><td>A busca híbrida gera sementes. Um grafo K-NN por locutor expande os candidatos, e o <code>bge-reranker-v2-m3</code> reordena tudo.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>O fluxo da arquitetura C</h3>
+      <div class="flow">
+        <div class="node"><b>Alegação + locutor</b><small>"o convidado X disse que…"</small></div>
+        <div class="arrow">↓</div>
+        <div class="node"><b>Transcrição completa → chunking</b><small>parágrafo/sentença ou janela fixa</small></div>
+        <div class="arrow">↓</div>
+        <div class="node warm"><b>Condicionamento ao locutor</b><small>busca só nas falas de quem fez a alegação; se o locutor não for identificado, busca no documento todo</small></div>
+        <div class="arrow">↓</div>
+        <div class="split">
+          <div class="node"><b>BM25</b><small>casamento lexical</small></div>
+          <div class="node"><b>bge-m3</b><small>similaridade semântica densa</small></div>
+        </div>
+        <div class="arrow">↓ Reciprocal Rank Fusion</div>
+        <div class="node"><b>Top-K sementes</b></div>
+        <div class="arrow">↓</div>
+        <div class="node hl"><b>Expansão por grafo K-NN do locutor</b><small>vizinhos semânticos das sementes entram no conjunto de candidatos</small></div>
+        <div class="arrow">↓</div>
+        <div class="node hl"><b>Reranking neural</b><small>bge-reranker-v2-m3</small></div>
+        <div class="arrow">↓</div>
+        <div class="node"><b>Até 4 evidências finais</b><small>restauração do parágrafo de origem + deduplicação</small></div>
+      </div>
+
+      <h2><span class="n">03</span>Decisões que fizeram diferença</h2>
+      <h3>Buscar nas falas de quem disse</h3>
+      <p>
+        Uma alegação é sempre atribuída a alguém. Se a busca considera a transcrição inteira, ela traz trechos
+        sobre o mesmo assunto ditos por <em>outra pessoa</em>, e o LLM conclui que a evidência não sustenta a
+        alegação. Restringir a busca ao locutor resolveu boa parte disso. O recall da classe
+        <code>INFERRED</code> subiu de <strong>30% para 66%</strong> com DeepSeek-V3.
+      </p>
+      <h3>Lexical e semântico juntos</h3>
+      <p>
+        Transcrições de audiência têm nomes próprios, siglas e números de projeto, que o BM25 encontra bem.
+        Também têm paráfrases, que só a busca densa encontra. O RRF combina os dois rankings pela posição, sem
+        precisar calibrar as escalas de score de cada um.
+      </p>
+      <h3>Medir o ganho de cada etapa</h3>
+      <p>
+        A expansão por grafo e o reranking somaram até <strong>+0,02 de Macro-F1</strong> sobre o retrieval
+        híbrido. O ganho grande veio da troca de evidência fixa por busca híbrida. Separar o efeito de cada
+        etapa evitou atribuir o resultado à peça mais sofisticada.
+      </p>
+
+      <h2><span class="n">04</span>Confiança e calibração</h2>
+      <p>
+        Acertar a classe não basta. Em verificação de fatos, também é preciso saber <em>quando</em> o modelo pode
+        estar errado. Para isso:
+      </p>
+      <ul>
+        <li><strong>Self-consistency:</strong> cada alegação é avaliada 3 vezes (<code>N=3</code>, <code>T=0.7</code>). O rótulo final vem do voto da maioria, e a confiança é a fração de votos que concordam (0,667 ou 1,0).</li>
+        <li><strong>Calibração conformal:</strong> avaliamos cobertura empírica, tamanho dos conjuntos de predição e validade condicional, tanto global quanto condicionada ao risco estimado.</li>
+        <li><strong>Avaliação humana:</strong> 219 alegações difíceis foram reavaliadas contra a transcrição completa, para não depender só dos rótulos automáticos.</li>
+      </ul>
+      <p>Os experimentos rodaram com DeepSeek-V3, Gemma-4-26B-A4B-it e Mistral-Small-3.2-24B.</p>
+
+      <h2><span class="n">05</span>O que entregamos</h2>
+      <ul>
+        <li>O pipeline completo, com as três arquiteturas reproduzíveis.</li>
+        <li>O <code>PublicHearingLDSExtended</code>: 2.203 alegações com evidências recuperadas e proveniência detalhada.</li>
+        <li>O artigo técnico <em>"Can We Trust RAG for Claim Verification? Evidence Retrieval, Risk-Aware Conformal Calibration, and Human-Verified Evaluation"</em>, que ficou em 2º lugar no Kunumi Ideias em Rede.</li>
+      </ul>
+
+      <h2><span class="n">06</span>Meu papel</h2>
+      <ul>
+        <li>Construí o pipeline de retrieval híbrido (BM25 + bge-m3 + RRF) e a recuperação condicionada ao locutor.</li>
+        <li>Implementei a expansão por grafos K-NN, o reranking neural e as etapas de chunking, expansão de candidatos e deduplicação.</li>
+        <li>Escrevi o artigo técnico: metodologia, experimentos e resultados.</li>
+      </ul>
+
+      <div class="next-proj">
+        <a href="../#projetos">← todos os projetos</a>
+        <a href="eurecachat.html">próximo: EurecaChat →</a>
+      </div>
+    </article>
+  </main>
+
+  <footer class="container footer">© <span id="year"></span> Beatriz de Souza Meneses</footer>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
